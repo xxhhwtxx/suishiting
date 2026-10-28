@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#D92B2B"/>
+      <stop offset="52%" stop-color="#B31B24"/>
+      <stop offset="100%" stop-color="#1E171A"/>
+    </linearGradient>
+    <radialGradient id="glowGrad" cx="512" cy="460" r="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF7A6B" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#FF7A6B" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="discGrad" x1="312" y1="320" x2="712" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2D2427"/>
+      <stop offset="50%" stop-color="#171214"/>
+      <stop offset="100%" stop-color="#2A2023"/>
+    </linearGradient>
+    <linearGradient id="headbandGrad" x1="212" y1="200" x2="812" y2="660" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFF9F5"/>
+      <stop offset="100%" stop-color="#F2DFD7"/>
+    </linearGradient>
+    <linearGradient id="noteGrad" x1="430" y1="380" x2="620" y2="660" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFE082"/>
+      <stop offset="100%" stop-color="#FF9E44"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded Square Background -->
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bgGrad)"/>
+  <circle cx="512" cy="460" r="400" fill="url(#glowGrad)"/>
+
+  <!-- Subtle Vinyl Disc Centerpiece -->
+  <circle cx="512" cy="548" r="216" fill="url(#discGrad)" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="10"/>
+  <circle cx="512" cy="548" r="164" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="6" stroke-dasharray="28 18"/>
+  <circle cx="512" cy="548" r="114" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="6"/>
+
+  <!-- Headphone Band Arc -->
+  <path
+    d="M244 528V484C244 331.569 363.988 208 512 208C660.012 208 780 331.569 780 484V528"
+    stroke="url(#headbandGrad)"
+    stroke-width="64"
+    stroke-linecap="round"
+  />
+
+  <!-- Left Ear Cup -->
+  <rect x="184" y="468" width="116" height="224" rx="58" fill="url(#headbandGrad)"/>
+  <rect x="220" y="508" width="44" height="144" rx="22" fill="#C82829"/>
+
+  <!-- Right Ear Cup -->
+  <rect x="724" y="468" width="116" height="224" rx="58" fill="url(#headbandGrad)"/>
+  <rect x="760" y="508" width="44" height="144" rx="22" fill="#C82829"/>
+
+  <!-- Center Bold Musical Note -->
+  <path
+    d="M540 410V582C540 618.451 508.66 648 470 648C431.34 648 400 618.451 400 582C400 545.549 431.34 516 470 516C483.89 516 496.834 519.819 507.716 526.405V396C507.716 378.327 522.043 364 539.716 364H622C637.464 364 650 376.536 650 392V424C650 439.464 637.464 452 622 452H540V410Z"
+    fill="url(#noteGrad)"
+  />
+</svg>
