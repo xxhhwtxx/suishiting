@@ -17,3 +17,5 @@ export 'src/controllers/update_controller.dart';
 export 'src/data/release_api.dart';
 export 'src/data/update_platform.dart';
 export 'src/domain/update_models.dart';
+export 'src/controllers/library_controller.dart';
+export 'src/controllers/recommendation_controller.dart';

@@ -12,3 +12,4 @@
 **/.kotlin/
 **/.cxx/
 **/*.hprof
+**/previews/

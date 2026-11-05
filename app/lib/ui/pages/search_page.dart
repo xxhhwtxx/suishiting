@@ -1,14 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide SearchController;
 import 'package:flutter/services.dart';
 import 'package:music163_core/music163_core.dart';
 
 import '../theme/app_theme.dart';
+import '../utils/app_snackbar.dart';
 import '../utils/formatters.dart';
 import '../widgets/song_cover.dart';
 
 /// 搜索与曲目解析页。
-/// 支持网易云音乐与 QQ 音乐双平台切换，支持歌名/歌手关键词、数字歌曲 ID、
-/// QQ songmid 及双平台分享链接检索，并直接调用 [PlayerController] 与 [DownloadController]。
+/// 支持网易云音乐与 QQ 音乐双平台切换、搜索历史、一键队列播放、收藏与下载。
 class SearchPageView extends StatefulWidget {
   const SearchPageView({
     super.key,
@@ -48,9 +50,16 @@ class _SearchPageViewState extends State<SearchPageView> {
     super.dispose();
   }
 
-  Future<void> _submitSearch() async {
+  Future<void> _submitSearch([String? overrideQuery]) async {
     _focusNode.unfocus();
-    await widget.core.search.search(_inputController.text);
+    final target = overrideQuery ?? _inputController.text;
+    if (overrideQuery != null) {
+      _inputController.value = TextEditingValue(
+        text: overrideQuery,
+        selection: TextSelection.collapsed(offset: overrideQuery.length),
+      );
+    }
+    await widget.core.search.search(target);
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -63,7 +72,8 @@ class _SearchPageViewState extends State<SearchPageView> {
     );
   }
 
-  Future<void> _handlePlayTap(Song song) async {
+  Future<void> _handlePlayTap(List<Song> songs, int index) async {
+    final song = songs[index];
     final player = widget.core.player;
     final isCurrent = player.currentSong?.key == song.key;
     if (isCurrent && player.isPlaying) {
@@ -71,7 +81,7 @@ class _SearchPageViewState extends State<SearchPageView> {
     } else if (isCurrent && player.source != null && player.error == null) {
       await player.resume();
     } else {
-      await player.play(song);
+      await player.playQueue(songs, startIndex: index);
     }
   }
 
@@ -84,13 +94,12 @@ class _SearchPageViewState extends State<SearchPageView> {
     if (existingTask == null) {
       await downloads.enqueue(song);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('已将「${song.name}」加入下载任务'),
-          action: SnackBarAction(
-            label: '查看下载',
-            onPressed: widget.onNavigateToDownloads,
-          ),
+      AppSnackBar.show(
+        context,
+        message: '已将「${song.name}」加入下载任务',
+        action: SnackBarAction(
+          label: '查看下载',
+          onPressed: widget.onNavigateToDownloads,
         ),
       );
       return;
@@ -100,9 +109,7 @@ class _SearchPageViewState extends State<SearchPageView> {
         existingTask.state == DownloadState.cancelled) {
       await downloads.retry(existingTask.id);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已重新开始下载「${song.name}」')),
-      );
+      AppSnackBar.show(context, message: '已重新开始下载「${song.name}」');
       return;
     }
 
@@ -115,6 +122,7 @@ class _SearchPageViewState extends State<SearchPageView> {
       listenable: Listenable.merge([
         widget.core,
         widget.core.search,
+        widget.core.library,
         widget.core.auth,
         widget.core.qqAuth,
         widget.core.player,
@@ -125,15 +133,16 @@ class _SearchPageViewState extends State<SearchPageView> {
         final auth = widget.core.auth;
         final qqAuth = widget.core.qqAuth;
         final isQq = search.platform == MusicPlatform.qq;
-        final isCurrentPlatformLoggedIn =
-            isQq ? qqAuth.isLoggedIn : auth.isLoggedIn;
+        final isCurrentPlatformLoggedIn = isQq
+            ? qqAuth.isLoggedIn
+            : auth.isLoggedIn;
         final currentPlatformAccountLabel = isQq
             ? (qqAuth.isLoggedIn
-                ? 'QQ 音乐已登录：${qqAuth.profile!.nickname}'
-                : 'QQ 音乐未登录（点击设置）')
+                  ? 'QQ 音乐已登录：${qqAuth.profile?.nickname ?? 'QQ 音乐用户'}'
+                  : 'QQ 音乐未登录（点击设置）')
             : (auth.isLoggedIn
-                ? '已登录：${auth.profile!.nickname}'
-                : '匿名模式（点击登录账号）');
+                  ? '已登录：${auth.profile?.nickname ?? '网易云用户'}'
+                  : '匿名模式（点击登录账号）');
         final colorScheme = Theme.of(context).colorScheme;
 
         return Column(
@@ -170,7 +179,7 @@ class _SearchPageViewState extends State<SearchPageView> {
                           onSubmitted: (_) => _submitSearch(),
                           decoration: InputDecoration(
                             hintText: isQq
-                                ? '搜索 QQ 音乐歌名、歌手、数字 ID、songmid 或 y.qq.com 链接'
+                                ? '搜索 QQ 音乐歌名、歌手、数字 ID、songmid 或链接'
                                 : '搜索歌名、歌手、数字 ID 或网易云分享链接',
                             prefixIcon: const Icon(Icons.search_rounded),
                             suffixIcon: Row(
@@ -244,14 +253,30 @@ class _SearchPageViewState extends State<SearchPageView> {
                         label: Text('优先音质：${widget.core.quality.label}'),
                         onPressed: widget.onNavigateToAccount,
                       ),
+                      if (search.songs.isNotEmpty)
+                        ActionChip(
+                          key: const Key('search_play_all_button'),
+                          avatar: Icon(
+                            Icons.playlist_play_rounded,
+                            size: 18,
+                            color: colorScheme.primary,
+                          ),
+                          label: Text('播放全部 (${search.songs.length})'),
+                          onPressed: () {
+                            unawaited(
+                              widget.core.player.playQueue(
+                                search.songs,
+                                startIndex: 0,
+                              ),
+                            );
+                          },
+                        ),
                     ],
                   ),
                 ],
               ),
             ),
-            Expanded(
-              child: _buildBody(context, search),
-            ),
+            Expanded(child: _buildBody(context, search)),
           ],
         );
       },
@@ -261,7 +286,6 @@ class _SearchPageViewState extends State<SearchPageView> {
   Widget _buildBody(BuildContext context, SearchController search) {
     final colorScheme = Theme.of(context).colorScheme;
     final platformLabel = search.platform.label;
-    final isQq = search.platform == MusicPlatform.qq;
 
     if (search.isLoading && search.songs.isEmpty) {
       return Center(
@@ -347,102 +371,84 @@ class _SearchPageViewState extends State<SearchPageView> {
     }
 
     if (search.query.isEmpty && search.songs.isEmpty) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(20),
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
+      final history = widget.core.library.history;
+      if (history.isEmpty) {
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerLow,
-                    borderRadius: BorderRadius.circular(22),
-                    border: Border.all(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: colorScheme.primaryContainer,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Icon(
-                              Icons.album_rounded,
-                              color: colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  '开始搜索或解析$platformLabel曲目',
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                Text(
-                                  '随时听 · 双平台独立直连客户端 · 无需中转服务器',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-                      _GuideRow(
-                        icon: Icons.text_fields_rounded,
-                        title: '歌名 / 歌手 / 专辑关键词',
-                        subtitle:
-                            '直接在上方输入框输入歌曲名称或艺人名称，点击「搜索」获取$platformLabel曲目列表。',
-                      ),
-                      const SizedBox(height: 12),
-                      _GuideRow(
-                        icon: Icons.tag_rounded,
-                        title: isQq ? '数字歌曲 ID 或 songmid 直达' : '纯数字歌曲 ID 精确直达',
-                        subtitle: isQq
-                            ? '输入 QQ 音乐纯数字 songid 或字母数字混合 songmid（如 0039MnYb0qxYhV），直接读取单曲详情。'
-                            : '输入网易云音乐纯数字歌曲 ID（如 186016），直接读取对应单曲详情。',
-                      ),
-                      const SizedBox(height: 12),
-                      _GuideRow(
-                        icon: Icons.link_rounded,
-                        title: isQq ? 'QQ 音乐单曲分享链接解析' : '网易云分享长短链接解析',
-                        subtitle: isQq
-                            ? '支持粘贴包含 y.qq.com（如 songDetail/xxx 或 songmid=xxx）的 QQ 音乐单曲链接。'
-                            : '支持粘贴包含 music.163.com、y.music.163.com、163cn.tv 或 163cn.link 的单曲分享文本。',
-                      ),
-                      const Divider(height: 28),
-                      Text(
-                        '提示：歌曲播放与下载可用性由$platformLabel接口及当前登录账号权限决定。若未登录对应平台账号，部分版权或高音质曲目可能仅返回试听片段。',
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.45,
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
+                Icon(
+                  Icons.search_rounded,
+                  size: 46,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.65),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '输入歌名、歌手、歌曲 ID 或分享链接即可搜索',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: colorScheme.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
+        );
+      }
+
+      return SingleChildScrollView(
+        key: const Key('search_history_section'),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.history_rounded,
+                  size: 18,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '搜索历史',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                ),
+                TextButton.icon(
+                  key: const Key('search_history_clear_button'),
+                  onPressed: widget.core.library.clearHistory,
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: const Text('清空历史'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final item in history)
+                  InputChip(
+                    key: Key('search_history_item_$item'),
+                    label: Text(item),
+                    onPressed: () => _submitSearch(item),
+                    deleteIcon: Icon(
+                      Icons.close_rounded,
+                      key: Key('search_history_remove_$item'),
+                      size: 16,
+                    ),
+                    onDeleted: () {
+                      unawaited(widget.core.library.removeSearch(item));
+                    },
+                  ),
+              ],
+            ),
+          ],
         ),
       );
     }
@@ -468,18 +474,6 @@ class _SearchPageViewState extends State<SearchPageView> {
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  isQq
-                      ? '请检查歌名拼写、确认 songid / songmid 是否正确，或粘贴完整的 y.qq.com 单曲链接。'
-                      : '请检查歌名拼写、确认数字歌曲 ID 是否存在，或粘贴完整的网易云单曲分享链接。',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: colorScheme.onSurfaceVariant,
-                    height: 1.4,
                   ),
                 ),
               ],
@@ -509,9 +503,9 @@ class _SearchPageViewState extends State<SearchPageView> {
         final isCurrentSong = player.currentSong?.key == song.key;
         final isPlayingThis = isCurrentSong && player.isPlaying;
         final isLoadingThis = isCurrentSong && player.isLoading;
-        final isTrialThis =
-            isCurrentSong && (player.source?.isTrial ?? false);
+        final isTrialThis = isCurrentSong && (player.source?.isTrial ?? false);
         final downloadTask = taskMap[song.key];
+        final isFavorite = widget.core.library.isFavorite(song);
 
         return _SongResultCard(
           song: song,
@@ -519,18 +513,19 @@ class _SearchPageViewState extends State<SearchPageView> {
           isPlaying: isPlayingThis,
           isLoading: isLoadingThis,
           isTrial: isTrialThis,
+          isFavorite: isFavorite,
           downloadTask: downloadTask,
-          onPlayTap: () => _handlePlayTap(song),
+          onPlayTap: () => _handlePlayTap(search.songs, index),
+          onFavoriteTap: () {
+            unawaited(widget.core.library.toggleFavorite(song));
+          },
           onDownloadTap: () => _handleDownloadTap(context, song, downloadTask),
         );
       },
     );
   }
 
-  Widget _buildPaginationFooter(
-    BuildContext context,
-    SearchController search,
-  ) {
+  Widget _buildPaginationFooter(BuildContext context, SearchController search) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Padding(
@@ -600,10 +595,7 @@ class _SearchPageViewState extends State<SearchPageView> {
 }
 
 class _PlatformSwitchBar extends StatelessWidget {
-  const _PlatformSwitchBar({
-    required this.selected,
-    required this.onChanged,
-  });
+  const _PlatformSwitchBar({required this.selected, required this.onChanged});
 
   final MusicPlatform selected;
   final ValueChanged<MusicPlatform> onChanged;
@@ -695,8 +687,10 @@ class _SongResultCard extends StatelessWidget {
     required this.isPlaying,
     required this.isLoading,
     required this.isTrial,
+    required this.isFavorite,
     required this.downloadTask,
     required this.onPlayTap,
+    required this.onFavoriteTap,
     required this.onDownloadTap,
   });
 
@@ -705,8 +699,10 @@ class _SongResultCard extends StatelessWidget {
   final bool isPlaying;
   final bool isLoading;
   final bool isTrial;
+  final bool isFavorite;
   final DownloadTask? downloadTask;
   final VoidCallback onPlayTap;
+  final VoidCallback onFavoriteTap;
   final VoidCallback onDownloadTap;
 
   @override
@@ -837,7 +833,21 @@ class _SongResultCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 4),
+              const SizedBox(width: 2),
+              IconButton(
+                key: Key('song_favorite_btn_${song.key}'),
+                tooltip: isFavorite ? '取消收藏' : '收藏歌曲',
+                onPressed: onFavoriteTap,
+                icon: Icon(
+                  isFavorite
+                      ? Icons.favorite_rounded
+                      : Icons.favorite_border_rounded,
+                  color: isFavorite
+                      ? colorScheme.error
+                      : colorScheme.onSurfaceVariant,
+                  size: 22,
+                ),
+              ),
               IconButton(
                 key: Key('song_play_btn_${song.key}'),
                 tooltip: isPlaying ? '暂停' : '播放',
@@ -864,11 +874,8 @@ class _SongResultCard extends StatelessWidget {
                   DownloadState.completed => '已下载，查看下载任务',
                   DownloadState.queued ||
                   DownloadState.resolving ||
-                  DownloadState.downloading =>
-                    '正在下载，点击查看进度',
-                  DownloadState.failed ||
-                  DownloadState.cancelled =>
-                    '重试下载',
+                  DownloadState.downloading => '正在下载，点击查看进度',
+                  DownloadState.failed || DownloadState.cancelled => '重试下载',
                   null => '下载歌曲',
                 },
                 onPressed: onDownloadTap,
@@ -877,11 +884,9 @@ class _SongResultCard extends StatelessWidget {
                     DownloadState.completed => Icons.download_done_rounded,
                     DownloadState.queued ||
                     DownloadState.resolving ||
-                    DownloadState.downloading =>
-                      Icons.downloading_rounded,
+                    DownloadState.downloading => Icons.downloading_rounded,
                     DownloadState.failed ||
-                    DownloadState.cancelled =>
-                      Icons.refresh_rounded,
+                    DownloadState.cancelled => Icons.refresh_rounded,
                     null => Icons.download_for_offline_outlined,
                   },
                   color: switch (downloadTask?.state) {
@@ -926,60 +931,6 @@ class _MetaTag extends StatelessWidget {
           color: foreground,
         ),
       ),
-    );
-  }
-}
-
-class _GuideRow extends StatelessWidget {
-  const _GuideRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: Icon(
-            icon,
-            size: 18,
-            color: colorScheme.primary,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  height: 1.38,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

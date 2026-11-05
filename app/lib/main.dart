@@ -5,6 +5,7 @@ import 'package:music163_core/music163_core.dart';
 
 import 'ui/shell/home_shell.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/utils/app_snackbar.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,12 +16,14 @@ typedef Music163App = MyApp;
 
 /// 应用根组件：支持直接注入已创建的 [Music163Core]，
 /// 或通过 [coreLoader]（默认 [Music163Core.create]）异步初始化并提供失败重试界面。
+/// 使用 [LibraryController.themePreference] 驱动 [ThemeMode]（默认白天 `light`）。
 class MyApp extends StatefulWidget {
   const MyApp({
     super.key,
     this.core,
     this.coreLoader = Music163Core.create,
     this.shareFile,
+    this.shareLyricsFile,
     this.openExternalUrl,
     this.closeExternalCoreOnDispose = false,
   });
@@ -28,6 +31,7 @@ class MyApp extends StatefulWidget {
   final Music163Core? core;
   final Future<Music163Core> Function() coreLoader;
   final Future<void> Function(DownloadTask task)? shareFile;
+  final Future<void> Function(DownloadTask task)? shareLyricsFile;
   final Future<bool> Function(Uri url)? openExternalUrl;
   final bool closeExternalCoreOnDispose;
 
@@ -39,7 +43,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Music163Core? _ownedCore;
   bool _isInitializing = false;
   Object? _initError;
-  ThemeMode _themeMode = ThemeMode.system;
 
   Music163Core? get _activeCore => widget.core ?? _ownedCore;
 
@@ -96,14 +99,21 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  void _cycleThemeMode() {
-    setState(() {
-      _themeMode = switch (_themeMode) {
-        ThemeMode.system => ThemeMode.light,
-        ThemeMode.light => ThemeMode.dark,
-        ThemeMode.dark => ThemeMode.system,
-      };
-    });
+  ThemeMode _toThemeMode(AppThemePreference preference) {
+    return switch (preference) {
+      AppThemePreference.light => ThemeMode.light,
+      AppThemePreference.dark => ThemeMode.dark,
+      AppThemePreference.system => ThemeMode.system,
+    };
+  }
+
+  void _cycleThemePreference(LibraryController library) {
+    final next = switch (library.themePreference) {
+      AppThemePreference.light => AppThemePreference.dark,
+      AppThemePreference.dark => AppThemePreference.system,
+      AppThemePreference.system => AppThemePreference.light,
+    };
+    unawaited(library.setTheme(next));
   }
 
   @override
@@ -120,6 +130,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    AppSnackBar.cancel();
     WidgetsBinding.instance.removeObserver(this);
     final coreToClose =
         _ownedCore ?? (widget.closeExternalCoreOnDispose ? widget.core : null);
@@ -132,26 +143,41 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final activeCore = _activeCore;
+    if (activeCore == null) {
+      return MaterialApp(
+        title: '随时听',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: ThemeMode.light,
+        home: _BootstrapScreen(
+          isInitializing: _isInitializing,
+          error: _initError,
+          onRetry: _initializeCore,
+        ),
+      );
+    }
 
-    return MaterialApp(
-      title: '随时听',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      darkTheme: AppTheme.dark(),
-      themeMode: _themeMode,
-      home: activeCore != null
-          ? HomeShell(
-              core: activeCore,
-              shareFile: widget.shareFile,
-              openExternalUrl: widget.openExternalUrl,
-              themeMode: _themeMode,
-              onCycleThemeMode: _cycleThemeMode,
-            )
-          : _BootstrapScreen(
-              isInitializing: _isInitializing,
-              error: _initError,
-              onRetry: _initializeCore,
-            ),
+    return ListenableBuilder(
+      listenable: activeCore.library,
+      builder: (context, _) {
+        final themeMode = _toThemeMode(activeCore.library.themePreference);
+        return MaterialApp(
+          title: '随时听',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: themeMode,
+          home: HomeShell(
+            core: activeCore,
+            shareFile: widget.shareFile,
+            shareLyricsFile: widget.shareLyricsFile,
+            openExternalUrl: widget.openExternalUrl,
+            themeMode: themeMode,
+            onCycleThemeMode: () => _cycleThemePreference(activeCore.library),
+          ),
+        );
+      },
     );
   }
 }

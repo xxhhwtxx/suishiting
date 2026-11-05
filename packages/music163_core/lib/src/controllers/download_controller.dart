@@ -13,16 +13,20 @@ class DownloadController extends SafeNotifier {
     this.directory, {
     this.concurrency = 2,
     http.Client Function()? clientFactory,
-  }) : _clientFactory = clientFactory ?? http.Client.new;
+    bool Function()? downloadLyrics,
+  }) : _clientFactory = clientFactory ?? http.Client.new,
+       _downloadLyrics = downloadLyrics ?? (() => false);
   final MusicRepository _repository;
   final Directory directory;
   final int concurrency;
   final http.Client Function() _clientFactory;
+  final bool Function() _downloadLyrics;
   final List<DownloadTask> _tasks = [];
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
   String? error;
   final Map<String, _Transfer> _transfers = {};
   final Map<String, Future<void>> _jobs = {};
+  final Map<String, Future<void>> _lyricJobs = {};
   Future<void> _saveQueue = Future.value();
   bool _closing = false;
   File get _manifest => File(p.join(directory.path, 'downloads.json'));
@@ -36,6 +40,7 @@ class DownloadController extends SafeNotifier {
         var task = DownloadTask.fromJson(item as Map<String, dynamic>);
         if (_tasks.any((t) => t.id == task.id)) continue;
         if (task.path != null && !_ownsPath(task.path!)) continue;
+        if (task.lyricsPath != null && !_ownsPath(task.lyricsPath!)) continue;
         if (task.isActive) {
           task = task.copyWith(
             state: DownloadState.failed,
@@ -188,13 +193,27 @@ class DownloadController extends SafeNotifier {
       }
       await partial.rename(finalFile.path);
       partial = null;
+      final completed = initial.copyWith(
+        state: DownloadState.completed,
+        path: finalFile.path,
+        downloadedBytes: bytes,
+        totalBytes: bytes,
+      );
+      _replace(completed);
+      await _save();
+      String? lyricsPath;
+      String? lyricsError;
+      if (_downloadLyrics() && !_closing) {
+        try {
+          lyricsPath = await _repository.saveLyricsFor(initial.song);
+          if (lyricsPath == null) lyricsError = '此歌曲暂无可保存的歌词。';
+        } catch (_) {
+          lyricsError = '音频已下载，歌词未能保存，可稍后重试。';
+        }
+      }
+      // Audio is already complete; a lyric error must never invalidate it.
       _replace(
-        initial.copyWith(
-          state: DownloadState.completed,
-          path: finalFile.path,
-          downloadedBytes: bytes,
-          totalBytes: bytes,
-        ),
+        completed.copyWith(lyricsPath: lyricsPath, lyricsError: lyricsError),
       );
     } catch (e) {
       final cancelled = transfer.cancelled || e is _Cancelled || _closing;
@@ -244,11 +263,13 @@ class DownloadController extends SafeNotifier {
   Future<void> remove(String id) async {
     cancel(id);
     await _jobs[id];
+    await _lyricJobs[id];
     final task = _find(id);
     if (task == null) return;
-    if (task.path != null && _ownsPath(task.path!)) {
+    for (final path in [task.path, task.lyricsPath].whereType<String>()) {
+      if (!_ownsPath(path)) continue;
       try {
-        final file = File(task.path!);
+        final file = File(path);
         if (await file.exists()) await file.delete();
       } catch (_) {
         error = '文件删除失败，请重试。';
@@ -259,6 +280,45 @@ class DownloadController extends SafeNotifier {
     _tasks.removeWhere((t) => t.id == id);
     await _save();
     changed();
+  }
+
+  Future<void> saveLyrics(String id) async {
+    final pending = _lyricJobs[id];
+    if (pending != null) return pending;
+    final job = _saveLyrics(id);
+    _lyricJobs[id] = job;
+    try {
+      await job;
+    } finally {
+      _lyricJobs.remove(id);
+    }
+  }
+
+  Future<void> _saveLyrics(String id) async {
+    await _jobs[id];
+    final task = _find(id);
+    if (closed ||
+        _closing ||
+        task == null ||
+        task.state != DownloadState.completed) {
+      return;
+    }
+    try {
+      final path = await _repository.saveLyricsFor(task.song);
+      if (_find(id) != task || closed) return;
+      _replace(
+        task.copyWith(
+          lyricsPath: path,
+          lyricsError: path == null ? '此歌曲暂无可保存的歌词。' : null,
+          clearLyricsError: path != null,
+        ),
+      );
+    } catch (_) {
+      if (_find(id) == task && !closed) {
+        _replace(task.copyWith(lyricsError: '歌词保存失败，请重试。'));
+      }
+    }
+    await _save();
   }
 
   Future<void> _save() {
@@ -285,6 +345,7 @@ class DownloadController extends SafeNotifier {
       transfer.cancel();
     }
     await Future.wait(_jobs.values.toList());
+    await Future.wait(_lyricJobs.values.toList());
     for (var i = 0; i < _tasks.length; i++) {
       if (_tasks[i].isActive) {
         _tasks[i] = _tasks[i].copyWith(state: DownloadState.cancelled);

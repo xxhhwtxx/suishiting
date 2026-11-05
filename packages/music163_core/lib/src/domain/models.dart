@@ -169,6 +169,8 @@ class DownloadTask {
     this.totalBytes,
     this.path,
     this.error,
+    this.lyricsPath,
+    this.lyricsError,
   });
   final String id;
   final Song song;
@@ -177,6 +179,8 @@ class DownloadTask {
   final int? totalBytes;
   final String? path;
   final String? error;
+  final String? lyricsPath;
+  final String? lyricsError;
   double? get progress => totalBytes != null && totalBytes! > 0
       ? (downloadedBytes / totalBytes!).clamp(0, 1)
       : null;
@@ -192,6 +196,9 @@ class DownloadTask {
     String? path,
     String? error,
     bool clearError = false,
+    String? lyricsPath,
+    String? lyricsError,
+    bool clearLyricsError = false,
   }) => DownloadTask(
     id: id,
     song: song,
@@ -200,6 +207,8 @@ class DownloadTask {
     totalBytes: totalBytes ?? this.totalBytes,
     path: path ?? this.path,
     error: clearError ? null : error ?? this.error,
+    lyricsPath: lyricsPath ?? this.lyricsPath,
+    lyricsError: clearLyricsError ? null : lyricsError ?? this.lyricsError,
   );
 
   Map<String, dynamic> toJson() => {
@@ -210,6 +219,8 @@ class DownloadTask {
     'totalBytes': totalBytes,
     'path': path,
     'error': error,
+    'lyricsPath': lyricsPath,
+    'lyricsError': lyricsError,
   };
 
   factory DownloadTask.fromJson(Map<String, dynamic> json) => DownloadTask(
@@ -220,6 +231,8 @@ class DownloadTask {
     totalBytes: (json['totalBytes'] as num?)?.toInt(),
     path: json['path'] as String?,
     error: json['error'] as String?,
+    lyricsPath: json['lyricsPath'] as String?,
+    lyricsError: json['lyricsError'] as String?,
   );
 }
 

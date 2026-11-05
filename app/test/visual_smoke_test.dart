@@ -59,14 +59,20 @@ void main() {
       final font = FontLoader('Roboto')
         ..addFont(
           File(
-            r'C:\Windows\Fonts\msyh.ttc',
+            const String.fromEnvironment(
+              'PREVIEW_FONT',
+              defaultValue: r'C:\Windows\Fonts\msyh.ttc',
+            ),
           ).readAsBytes().then((b) => ByteData.sublistView(b)),
         );
       await font.load();
       final fallback = FontLoader('Ahem')
         ..addFont(
           File(
-            r'C:\Windows\Fonts\msyh.ttc',
+            const String.fromEnvironment(
+              'PREVIEW_FONT',
+              defaultValue: r'C:\Windows\Fonts\msyh.ttc',
+            ),
           ).readAsBytes().then((b) => ByteData.sublistView(b)),
         );
       await fallback.load();
@@ -84,34 +90,64 @@ void main() {
         audioBackend: _Audio(),
         downloadDirectory: temp,
         client: MockClient(
-          (_) async => http.Response.bytes(
+          (request) async => http.Response.bytes(
             utf8.encode(
               jsonEncode({
                 'code': 200,
-                'result': {
-                  'songCount': 2,
-                  'hasMore': false,
-                  'songs': [
-                    {
-                      'id': 1,
-                      'name': '海边的晚风（界面测试曲目）',
-                      'ar': [
-                        {'name': '示例歌手'},
-                      ],
-                      'al': {'name': '界面检查'},
-                      'dt': 216000,
-                    },
-                    {
-                      'id': 2,
-                      'name': '漫长旅途里的短暂休息',
-                      'ar': [
-                        {'name': '示例乐队'},
-                      ],
-                      'al': {'name': '测试专辑'},
-                      'dt': 198000,
-                    },
-                  ],
-                },
+                if (request.url.path.contains('/song/lyric'))
+                  'lrc': {
+                    'lyric':
+                        '[00:00.00]海边的晚风\n[00:12.00]陪你经过漫长的旅途\n[00:26.00]此处为界面测试歌词',
+                  },
+                'result': request.url.path.contains('/personalized/newsong')
+                    ? [
+                        {
+                          'song': {
+                            'id': 1,
+                            'name': '海边的晚风（界面测试曲目）',
+                            'ar': [
+                              {'name': '示例歌手'},
+                            ],
+                            'al': {'name': '界面检查'},
+                            'dt': 216000,
+                          },
+                        },
+                        {
+                          'song': {
+                            'id': 2,
+                            'name': '漫长旅途里的短暂休息',
+                            'ar': [
+                              {'name': '示例乐队'},
+                            ],
+                            'al': {'name': '测试专辑'},
+                            'dt': 198000,
+                          },
+                        },
+                      ]
+                    : {
+                        'songCount': 2,
+                        'hasMore': false,
+                        'songs': [
+                          {
+                            'id': 1,
+                            'name': '海边的晚风（界面测试曲目）',
+                            'ar': [
+                              {'name': '示例歌手'},
+                            ],
+                            'al': {'name': '界面检查'},
+                            'dt': 216000,
+                          },
+                          {
+                            'id': 2,
+                            'name': '漫长旅途里的短暂休息',
+                            'ar': [
+                              {'name': '示例乐队'},
+                            ],
+                            'al': {'name': '测试专辑'},
+                            'dt': 198000,
+                          },
+                        ],
+                      },
               }),
             ),
             200,
@@ -130,13 +166,35 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await _capture(tester, key, '$output/phone-light-search.png');
-      await core!.search.search('海边');
+      await _capture(tester, key, '$output/phone-light-recommendations.png');
+      await tester.tap(find.byKey(const Key('nav_tab_search')));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() => core!.search.search('海边'));
       await tester.pumpAndSettle();
       await _capture(tester, key, '$output/phone-light-results.png');
+      await tester.runAsync(() async {
+        final song = core!.search.songs.first;
+        await core!.library.toggleFavorite(song);
+        final local = File('${temp!.path}/preview.mp3');
+        await local.writeAsBytes([73, 68, 51, 0]);
+        await core!.player.playLocal(song, local.path);
+      });
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('mini_player_expand_button')));
+      await tester.pump();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 40)),
+      );
+      await tester.pumpAndSettle();
+      await _capture(tester, key, '$output/phone-light-player.png');
+      await tester.tap(find.byKey(const Key('now_playing_close_button')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('nav_tab_account')));
       await tester.pumpAndSettle();
       await _capture(tester, key, '$output/phone-light-account.png');
+      await tester.runAsync(
+        () => core!.library.setTheme(AppThemePreference.dark),
+      );
       tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
       tester.platformDispatcher.textScaleFactorTestValue = 1.4;
       await tester.pumpAndSettle();
@@ -161,7 +219,7 @@ void main() {
 }
 
 Future<void> _capture(WidgetTester tester, GlobalKey key, String path) async {
-  expect(tester.takeException(), isNull);
+  final renderError = tester.takeException();
   final boundary =
       key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
   await tester.runAsync(() async {
@@ -170,4 +228,5 @@ Future<void> _capture(WidgetTester tester, GlobalKey key, String path) async {
     await File(path).writeAsBytes(data!.buffer.asUint8List());
     image.dispose();
   });
+  expect(renderError, isNull);
 }

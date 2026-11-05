@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
 import '../domain/models.dart';
 import 'netease_api.dart';
 import 'qq_api.dart';
@@ -7,6 +11,96 @@ class MusicRepository {
   final NeteaseApi api;
   final QqApi? qqApi;
   AudioQuality quality = AudioQuality.higher;
+  Directory? lyricDirectory;
+  final Map<String, String> _lyricMemory = {};
+  final Map<String, Future<String?>> _lyricSaves = {};
+
+  File? lyricFileFor(Song song) => lyricDirectory == null
+      ? null
+      : File(
+          p.join(
+            lyricDirectory!.path,
+            '${sha256.convert(utf8.encode(song.key))}.lrc',
+          ),
+        );
+  Future<String?> localLyricsFor(Song song) async {
+    final file = lyricFileFor(song);
+    if (file == null) return null;
+    try {
+      if (await file.exists() && await file.length() <= 2 * 1024 * 1024) {
+        return file.readAsString();
+      }
+    } catch (_) {
+      /* An unreadable sidecar can be fetched again online. */
+    }
+    return null;
+  }
+
+  Future<String?> saveLyricsFor(Song song) async {
+    final pending = _lyricSaves[song.key];
+    if (pending != null) return pending;
+    final job = _saveLyricsFor(song);
+    _lyricSaves[song.key] = job;
+    try {
+      return await job;
+    } finally {
+      _lyricSaves.remove(song.key);
+    }
+  }
+
+  Future<String?> _saveLyricsFor(Song song) async {
+    final file = lyricFileFor(song);
+    if (file == null) return null;
+    final text = await lyricsFor(song);
+    if (text.trim().isEmpty) return null;
+    if (utf8.encode(text).length > 2 * 1024 * 1024) {
+      throw const MusicException('歌词文件过大。');
+    }
+    await file.parent.create(recursive: true);
+    final temp = File('${file.path}.tmp');
+    try {
+      await temp.writeAsString(text, flush: true);
+      await temp.rename(file.path);
+    } finally {
+      if (await temp.exists()) await temp.delete();
+    }
+    return file.path;
+  }
+
+  Future<RecommendationResult> recommendationsFor(
+    MusicPlatform platform,
+  ) async {
+    if (platform == MusicPlatform.qq) {
+      return RecommendationResult(await _qq.recommendations(), 'QQ 新歌推荐');
+    }
+    if (api.musicU != null) {
+      try {
+        final reply = await api.request(
+          '/api/v3/discovery/recommend/songs',
+          {},
+        );
+        final data = reply.json['data'] as Map<String, dynamic>? ?? {};
+        final songs = (data['dailySongs'] as List? ?? [])
+            .whereType<Map<String, dynamic>>()
+            .map(Song.fromJson)
+            .toList();
+        if (songs.isNotEmpty) return RecommendationResult(songs, '网易云每日推荐');
+      } on MusicException {
+        /* Public new songs remain available if daily picks require login. */
+      }
+    }
+    final reply = await api.request('/api/personalized/newsong', {
+      'limit': 30,
+    }, anonymous: true);
+    final songs = (reply.json['result'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(
+          (entry) =>
+              Song.fromJson((entry['song'] as Map<String, dynamic>?) ?? entry),
+        )
+        .toList();
+    return RecommendationResult(songs, '网易云新歌推荐');
+  }
 
   QqApi get _qq => qqApi ?? (throw const MusicException('QQ 音乐未初始化。'));
   Future<SearchPage> searchFor(
@@ -52,8 +146,21 @@ class MusicRepository {
       song.platform == MusicPlatform.qq
       ? _qq.source(song, quality, download: true)
       : downloadSource(song.id);
-  Future<String> lyricsFor(Song song) =>
-      song.platform == MusicPlatform.qq ? _qq.lyrics(song) : lyrics(song.id);
+  Future<String> lyricsFor(Song song) async {
+    final local = await localLyricsFor(song);
+    if (local != null) return local;
+    if (_lyricMemory.containsKey(song.key)) return _lyricMemory[song.key]!;
+    final text = await (song.platform == MusicPlatform.qq
+        ? _qq.lyrics(song)
+        : lyrics(song.id));
+    if (text.trim().isNotEmpty) {
+      if (_lyricMemory.length >= 64) {
+        _lyricMemory.remove(_lyricMemory.keys.first);
+      }
+      _lyricMemory[song.key] = text;
+    }
+    return text;
+  }
 
   Future<SearchPage> search(
     String query, {
@@ -171,4 +278,11 @@ class MusicRepository {
     return (reply.json['lrc'] as Map<String, dynamic>?)?['lyric'] as String? ??
         '';
   }
+}
+
+class RecommendationResult {
+  RecommendationResult(List<Song> songs, this.label)
+    : songs = List.unmodifiable(songs);
+  final List<Song> songs;
+  final String label;
 }

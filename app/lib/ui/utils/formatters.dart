@@ -132,14 +132,27 @@ abstract final class UiFormatters {
     return idx >= 0 ? normalized.substring(idx + 1) : normalized;
   }
 
-  /// 解析 LRC 歌词文本为按时间排序的歌词行列表。
+  /// 解析 LRC 歌词文本为按时间排序的歌词行列表（支持 `[offset:+/-ms]` 与单行多时间标签）。
   static List<LrcLine> parseLrc(String rawLrc) {
     if (rawLrc.trim().isEmpty) return const [];
     final lines = rawLrc.split(RegExp(r'\r?\n'));
     final timePattern = RegExp(r'\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]');
+    final metaPattern = RegExp(
+      r'^\s*\[(ti|ar|al|by|offset|re|ve|kana|total|language):.*\]\s*$',
+      caseSensitive: false,
+    );
+    final offsetMatch = RegExp(
+      r'\[\s*offset\s*:\s*([+-]?\d+)\s*\]',
+      caseSensitive: false,
+    ).firstMatch(rawLrc);
+    final offsetMs = int.tryParse(offsetMatch?.group(1) ?? '0') ?? 0;
+
     final parsed = <LrcLine>[];
 
     for (final rawLine in lines) {
+      if (metaPattern.hasMatch(rawLine)) {
+        continue;
+      }
       final matches = timePattern.allMatches(rawLine).toList();
       if (matches.isEmpty) {
         final plain = rawLine.trim();
@@ -159,13 +172,13 @@ abstract final class UiFormatters {
           2 => (int.tryParse(fractionRaw) ?? 0) * 10,
           _ => int.tryParse(fractionRaw.padRight(3, '0').substring(0, 3)) ?? 0,
         };
+        final rawTotalMs = (minutes * 60 + seconds) * 1000 + millis;
+        final adjustedMs = (rawTotalMs + offsetMs) < 0
+            ? 0
+            : (rawTotalMs + offsetMs);
         parsed.add(
           LrcLine(
-            timestamp: Duration(
-              minutes: minutes,
-              seconds: seconds,
-              milliseconds: millis,
-            ),
+            timestamp: Duration(milliseconds: adjustedMs),
             text: text,
           ),
         );
@@ -194,6 +207,57 @@ abstract final class UiFormatters {
       }
     }
     return active;
+  }
+
+  /// 提取去除 LRC 时间标签与元数据标签后的纯文本完整歌词（按原行顺序保留文本，用于一键复制全文）。
+  static String plainLyricsText(String rawLrc) {
+    if (rawLrc.trim().isEmpty) return '';
+    final timePattern = RegExp(r'\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]');
+    final metaTagPattern = RegExp(
+      r'^\s*\[[a-zA-Z_][a-zA-Z0-9_-]*:[^\]]*\]\s*$',
+    );
+    final inlineMetaPattern = RegExp(r'\[[a-zA-Z_][a-zA-Z0-9_-]*:[^\]]*\]');
+    final outputLines = <String>[];
+    for (final rawLine in rawLrc.split(RegExp(r'\r?\n'))) {
+      if (metaTagPattern.hasMatch(rawLine)) continue;
+      final cleaned = rawLine
+          .replaceAll(timePattern, '')
+          .replaceAll(inlineMetaPattern, '')
+          .trim();
+      if (cleaned.isNotEmpty) {
+        outputLines.add(cleaned);
+      }
+    }
+    return outputLines.join('\n').trim();
+  }
+
+  /// 播放模式中文名称。
+  static String playbackModeLabel(PlaybackMode mode) {
+    return switch (mode) {
+      PlaybackMode.sequence => '顺序播放',
+      PlaybackMode.repeatAll => '列表循环',
+      PlaybackMode.repeatOne => '单曲循环',
+      PlaybackMode.shuffle => '随机播放',
+    };
+  }
+
+  /// 循环切换下一个播放模式。
+  static PlaybackMode nextPlaybackMode(PlaybackMode current) {
+    return switch (current) {
+      PlaybackMode.sequence => PlaybackMode.repeatAll,
+      PlaybackMode.repeatAll => PlaybackMode.repeatOne,
+      PlaybackMode.repeatOne => PlaybackMode.shuffle,
+      PlaybackMode.shuffle => PlaybackMode.sequence,
+    };
+  }
+
+  /// 主题偏好中文名称。
+  static String themePreferenceLabel(AppThemePreference preference) {
+    return switch (preference) {
+      AppThemePreference.light => '浅色（默认）',
+      AppThemePreference.dark => '深色',
+      AppThemePreference.system => '跟随系统',
+    };
   }
 }
 

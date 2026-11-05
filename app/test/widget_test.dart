@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart' hide SearchController;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:music163_app/main.dart';
+import 'package:music163_app/ui/utils/app_snackbar.dart';
+import 'package:music163_app/ui/utils/formatters.dart';
 import 'package:music163_core/music163_core.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -326,6 +328,72 @@ Future<Music163Core> _createTestCore({
           headers: {'content-type': 'application/json; charset=utf-8'},
         );
       }
+
+      if (method == 'get_new_song_info') {
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'code': 0,
+              'req_0': {
+                'code': 0,
+                'data': {
+                  'songlist': [
+                    {
+                      'id': 301,
+                      'mid': '001RecQqSong01',
+                      'name': 'QQ 推荐金曲',
+                      'singer': [
+                        {'name': '周杰伦'},
+                      ],
+                      'album': {'name': '七里香', 'mid': '002Neh8l0uciQZ'},
+                      'interval': 299,
+                      'file': {'media_mid': '001RecQqSong01'},
+                    },
+                  ],
+                },
+              },
+            }),
+          ),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      }
+    }
+
+    if (path.contains('/eapi/personalized/newsong')) {
+      return http.Response.bytes(
+        utf8.encode(
+          jsonEncode({
+            'code': 200,
+            'result': [
+              {
+                'song': {
+                  'id': 201,
+                  'name': '网易云推荐新歌',
+                  'ar': [
+                    {'name': '林俊杰'},
+                  ],
+                  'al': {'name': '江南'},
+                  'dt': 265000,
+                },
+              },
+              {
+                'song': {
+                  'id': 202,
+                  'name': '网易云推荐第二首',
+                  'ar': [
+                    {'name': '陈奕迅'},
+                  ],
+                  'al': {'name': 'U87'},
+                  'dt': 240000,
+                },
+              },
+            ],
+          }),
+        ),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
     }
 
     if (path.contains('/eapi/v1/search/song/get')) {
@@ -386,11 +454,24 @@ Future<Music163Core> _createTestCore({
     }
 
     if (path.contains('/eapi/song/lyric')) {
+      final isSong202 = request.body.contains(
+        encodeEapi('/api/song/lyric', const {
+          'id': 202,
+          'lv': -1,
+          'kv': -1,
+          'tv': -1,
+          'yv': -1,
+        }),
+      );
       return http.Response.bytes(
         utf8.encode(
           jsonEncode({
             'code': 200,
-            'lrc': {'lyric': '[00:00.00]故事的小黄花\n[00:04.50]从出生那年就飘着'},
+            'lrc': {
+              'lyric': isSong202
+                  ? '[ti:浮夸]\n[ar:陈奕迅]\n[offset:+500]\n[00:01.00][00:10.00]有人问我我就会讲\n[00:05.00]但是无人来'
+                  : '[00:00.00]故事的小黄花\n[00:04.50]从出生那年就飘着',
+            },
           }),
         ),
         200,
@@ -436,6 +517,7 @@ Future<Music163Core> _createTestCore({
 }
 
 Future<void> _pumpRealIo(WidgetTester tester, {int cycles = 10}) async {
+  await tester.pump();
   for (var i = 0; i < cycles; i++) {
     await tester.runAsync(() async {
       await Future<void>.delayed(const Duration(milliseconds: 15));
@@ -538,15 +620,20 @@ void main() {
       await tester.pumpWidget(MyApp(core: core));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const Key('nav_tab_search')));
+      await tester.pumpAndSettle();
+
       await tester.enterText(find.byKey(const Key('search_input_field')), '晴天');
       await tester.pump();
       await tester.tap(find.byKey(const Key('search_submit_button')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
 
       expect(find.text('晴天（测试曲目）'), findsOneWidget);
       expect(find.text('夜曲（完整音源）'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('song_play_btn_101')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
 
       // 迷你播放栏必须清晰提示试听音源
@@ -554,6 +641,7 @@ void main() {
 
       // 展开完整播放器并验证试听横幅与同步歌词
       await tester.tap(find.byKey(const Key('mini_player_expand_button')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
 
       expect(find.byKey(const Key('now_playing_trial_banner')), findsOneWidget);
@@ -751,19 +839,25 @@ void main() {
       await tester.pumpWidget(MyApp(core: core));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const Key('nav_tab_search')));
+      await tester.pumpAndSettle();
+
       // 1. 先在网易云搜索并播放 id=101 的曲目（key='101'）
       await tester.enterText(find.byKey(const Key('search_input_field')), '晴天');
       await tester.pump();
       await tester.tap(find.byKey(const Key('search_submit_button')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const Key('song_play_btn_101')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
       expect(core.player.currentSong?.key, '101');
       expect(core.player.isPlaying, isTrue);
 
       // 2. 切换到 QQ 音乐，自动重新搜索，返回同样 id=101 但 mid='0039MnYb0qxYhV' 的 QQ 曲目
       await tester.tap(find.byKey(const Key('search_platform_qq')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
 
       expect(core.search.platform, MusicPlatform.qq);
@@ -785,10 +879,12 @@ void main() {
 
       // 3. 点击播放 QQ 音乐曲目并展开播放器验证 lyricsFor(Song)
       await tester.tap(qqPlayBtn);
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
       expect(core.player.currentSong?.key, 'qq_0039MnYb0qxYhV');
 
       await tester.tap(find.byKey(const Key('mini_player_expand_button')));
+      await _pumpRealIo(tester);
       await tester.pumpAndSettle();
       expect(find.text('刮风这天我试过握着你手'), findsOneWidget);
     } finally {
@@ -1251,6 +1347,283 @@ void main() {
       expect(fakeUpdater.installCount, 2);
       expect(fakeUpdater.status, UpdateStatus.ready);
       expect(find.text('请在系统安装界面完成更新'), findsOneWidget);
+    } finally {
+      await _cleanupTestCore(tester, core, tempDir);
+    }
+  });
+
+  testWidgets('1.3.0 推荐页双平台切换与队列播放、大封面播放页、上/下一首切换自动刷新歌词、LRC偏移/多标签解析与复制全文', (
+    tester,
+  ) async {
+    late Directory tempDir;
+    final store = _MemoryCredentialStore();
+    final audio = _FakeAudioBackend();
+    late Music163Core core;
+    String? copiedText;
+
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          final args = call.arguments as Map<dynamic, dynamic>?;
+          copiedText = args?['text'] as String?;
+        }
+        return null;
+      },
+    );
+
+    await tester.runAsync(() async {
+      tempDir = await Directory.systemTemp.createTemp(
+        'music163_ui_130_recommend_player_',
+      );
+      core = await _createTestCore(
+        tempDir: tempDir,
+        store: store,
+        audio: audio,
+      );
+    });
+
+    try {
+      await tester.pumpWidget(MyApp(core: core));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      // 1. 默认进入「推荐」页并展示网易云新歌推荐与来源标签
+      expect(find.byKey(const Key('recommend_source_label')), findsOneWidget);
+      expect(find.text('网易云新歌推荐'), findsOneWidget);
+      expect(find.text('网易云推荐新歌'), findsOneWidget);
+      expect(find.text('网易云推荐第二首'), findsOneWidget);
+
+      // 2. 切换至 QQ 音乐推荐并验证列表刷新，再切回网易云音乐推荐
+      await tester.tap(find.byKey(const Key('recommend_platform_qq')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      expect(core.recommendations.platform, MusicPlatform.qq);
+      expect(find.text('QQ 新歌推荐'), findsOneWidget);
+      expect(find.text('QQ 推荐金曲'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('recommend_platform_netease')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('网易云推荐新歌'), findsOneWidget);
+
+      // 3. 点击「播放全部」启动列表队列播放，并展开完整播放界面
+      await tester.tap(find.byKey(const Key('recommend_play_all_button')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      expect(core.player.queue.length, 2);
+      expect(core.player.currentIndex, 0);
+      expect(core.player.currentSong?.name, '网易云推荐新歌');
+
+      await tester.tap(find.byKey(const Key('mini_player_expand_button')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      // 验证大专辑封面（手机宽度减 48 左右，突破旧版 280 封顶）与首首歌词展示
+      expect(
+        find.byKey(const Key('now_playing_large_artwork')),
+        findsOneWidget,
+      );
+      expect(find.text('故事的小黄花'), findsOneWidget);
+
+      // 4. 切换播放模式（顺序 -> 列表循环 -> 单曲循环 -> 随机）
+      expect(core.player.mode, PlaybackMode.sequence);
+      final modeBtn = find.byKey(const Key('now_playing_mode_button'));
+      await tester.ensureVisible(modeBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(modeBtn);
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+      expect(core.player.mode, PlaybackMode.repeatAll);
+
+      // 5. 点击「下一首」切换至第二首（id: 202），验证播放器自动刷新歌词，且正确解析 [offset:+500] 与多时间标签
+      final nextBtn = find.byKey(const Key('now_playing_next_button'));
+      await tester.ensureVisible(nextBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(nextBtn);
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      expect(core.player.currentIndex, 1);
+      expect(core.player.currentSong?.id, 202);
+      expect(find.text('有人问我我就会讲'), findsNWidgets(2));
+      expect(find.text('但是无人来'), findsOneWidget);
+
+      // 验证 parseLrc 的 offset 与多标签时间轴排序：[00:01.00]+500ms -> 00:01.50，[00:05.00]+500ms -> 00:05.50，[00:10.00]+500ms -> 00:10.50
+      final parsed = UiFormatters.parseLrc(
+        '[ti:浮夸]\n[ar:陈奕迅]\n[offset:+500]\n[00:01.00][00:10.00]有人问我我就会讲\n[00:05.00]但是无人来',
+      );
+      expect(parsed.length, 3);
+      expect(parsed[0].timestamp, const Duration(milliseconds: 1500));
+      expect(parsed[1].timestamp, const Duration(milliseconds: 5500));
+      expect(parsed[2].timestamp, const Duration(milliseconds: 10500));
+
+      // 6. 点击「复制全文」，验证去除时间标签与元数据标签并按原顺序保留正文
+      final copyBtn = find.byKey(const Key('now_playing_copy_lyrics_button'));
+      await tester.ensureVisible(copyBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(copyBtn);
+      await tester.pump();
+
+      expect(copiedText, '有人问我我就会讲\n但是无人来');
+    } finally {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+      await _cleanupTestCore(tester, core, tempDir);
+    }
+  });
+
+  testWidgets('1.3.0 搜索历史与清空、收藏页、默认浅色主题与持久化、折叠使用说明及无障碍 SnackBar 定时消失', (
+    tester,
+  ) async {
+    late Directory tempDir;
+    final store = _MemoryCredentialStore();
+    final audio = _FakeAudioBackend();
+    late Music163Core core;
+
+    await tester.runAsync(() async {
+      tempDir = await Directory.systemTemp.createTemp(
+        'music163_ui_130_library_theme_',
+      );
+      core = await _createTestCore(
+        tempDir: tempDir,
+        store: store,
+        audio: audio,
+      );
+    });
+
+    try {
+      await tester.pumpWidget(MyApp(core: core));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      // 1. 验证默认浅色主题（ThemeMode.light）
+      final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(materialApp.themeMode, ThemeMode.light);
+
+      // 2. 切换到搜索页，验证搜索后生成搜索历史芯片，支持单条删除与清空
+      await tester.tap(find.byKey(const Key('nav_tab_search')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const Key('search_input_field')), '晴天');
+      await tester.tap(find.byKey(const Key('search_submit_button')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      expect(core.library.history, contains('晴天'));
+
+      // 收藏搜索结果中的第一首歌曲
+      final favBtn = find.byKey(const Key('song_favorite_btn_101'));
+      await tester.tap(favBtn);
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+      expect(core.library.favorites.length, 1);
+
+      // 清空搜索框回到空状态，检查搜索历史展示与删除
+      await tester.tap(find.byKey(const Key('search_clear_button')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('search_history_section')), findsOneWidget);
+      expect(find.byKey(const Key('search_history_item_晴天')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('search_history_clear_button')));
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+      expect(core.library.history, isEmpty);
+      expect(find.byKey(const Key('search_history_section')), findsNothing);
+
+      // 3. 切换到「收藏」页，验证已收藏歌曲展示与播放全部入口
+      await tester.tap(find.byKey(const Key('nav_tab_favorites')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('本机收藏 (1)'), findsOneWidget);
+      expect(find.byKey(const Key('favorite_song_item_101')), findsOneWidget);
+      expect(
+        find.byKey(const Key('favorites_play_all_button')),
+        findsOneWidget,
+      );
+
+      // 4. 切换到「设置」页，验证外观主题切换并持久化保存、下载歌词开关与默认折叠的使用说明
+      await tester.tap(find.byKey(const Key('nav_tab_account')));
+      await tester.pumpAndSettle();
+
+      final darkChip = find.byKey(const Key('theme_option_dark'));
+      await tester.ensureVisible(darkChip);
+      await tester.pumpAndSettle();
+      await tester.tap(darkChip);
+      await _pumpRealIo(tester);
+      await tester.pumpAndSettle();
+
+      expect(core.library.themePreference, AppThemePreference.dark);
+      final updatedApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+      expect(updatedApp.themeMode, ThemeMode.dark);
+
+      // 验证重启新 Core 实例（复用同一 tempDir）后主题偏好与收藏仍保持持久化
+      late Music163Core restartedCore;
+      await tester.runAsync(() async {
+        restartedCore = await _createTestCore(
+          tempDir: tempDir,
+          store: store,
+          audio: audio,
+        );
+      });
+      expect(restartedCore.library.themePreference, AppThemePreference.dark);
+      expect(restartedCore.library.favorites.length, 1);
+      await tester.runAsync(() async {
+        await restartedCore.close();
+      });
+
+      // 验证折叠的「搜索教程与使用说明」默认收起，点击展开后显示正常产品说明且不含“基于/参考”字样
+      final helpTile = find.byKey(const Key('settings_help_and_guide_tile'));
+      await tester.ensureVisible(helpTile);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1. 搜索与链接解析语法'), findsNothing);
+
+      await tester.tap(helpTile);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('1. 搜索与链接解析语法'), findsOneWidget);
+      expect(find.textContaining('基于'), findsNothing);
+      expect(find.textContaining('参考'), findsNothing);
+
+      // 5. 验证无障碍模式（accessibleNavigation: true）且带 SnackBarAction 时，AppSnackBar 仍会在约 2 秒后定时自动关闭
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(accessibleNavigation: true),
+          child: MaterialApp(
+            home: Scaffold(
+              body: Builder(
+                builder: (ctx) => Center(
+                  child: ElevatedButton(
+                    key: const Key('trigger_accessible_snackbar'),
+                    onPressed: () {
+                      AppSnackBar.show(
+                        ctx,
+                        message: '测试下载提示自动消失',
+                        action: SnackBarAction(label: '查看下载', onPressed: () {}),
+                      );
+                    },
+                    child: const Text('触发提示'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('trigger_accessible_snackbar')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('测试下载提示自动消失'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpAndSettle();
+      expect(find.text('测试下载提示自动消失'), findsNothing);
     } finally {
       await _cleanupTestCore(tester, core, tempDir);
     }

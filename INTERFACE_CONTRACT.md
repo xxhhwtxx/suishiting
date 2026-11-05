@@ -1,5 +1,21 @@
 # Flutter 界面对接契约
 
+## 1.3.0 简洁播放器增量（最高优先，2026-11-06）
+
+用户要求保留全部旧功能；只增加推荐、搜索历史、收藏、队列/上下一首/随机/循环、主题持久化、歌词复制和可选离线 LRC。Codex 写业务，原 Antigravity/Gemini 会话写 UI。本节覆盖下方旧 UI 限制。
+
+* `core.library: LibraryController` 是 ChangeNotifier。`favorites:List<Song>`、`history:List<String>`（最近在前，去重，最多30条）、`themePreference:AppThemePreference`（light/dark/system，默认light）、`downloadLyrics:bool`（默认true）、`error:String?`。方法 `bool isFavorite(Song)`；`Future<void> toggleFavorite(Song)`、`removeSearch(String)`、`clearHistory()`、`setTheme(AppThemePreference)`、`setDownloadLyrics(bool)`。历史由 `core.search.search` 自动记录，UI 不另写存储。收藏仅本机收藏，不宣称同步平台。
+* MyApp 使用 `core.library.themePreference` 驱动 ThemeMode 并监听 library，按钮调用 `setTheme`；关闭重启后恢复。保留亮/暗/跟随系统，初始默认白天。
+* `core.recommendations: RecommendationController` 是 ChangeNotifier。属性 `platform:MusicPlatform`、`songs:List<Song>`、`isLoading:bool`、`error:String?`、`sourceLabel:String`；`Future<void> load({bool refresh=false})`、`setPlatform(MusicPlatform)`。推荐首页展示真实接口数据，支持两个平台，数据源名称用 sourceLabel。只在推荐页首次出现或刷新时加载，不在build里请求。失败保留错误和重试，不编造歌曲。
+* `core.player` 保留旧API，新增 `queue:List<Song>`、`currentIndex:int`、`mode:PlaybackMode`（sequence/repeatAll/repeatOne/shuffle）、`Future<void> playQueue(List<Song>,{int startIndex=0})`、`next()`、`previous()`、`setMode(PlaybackMode)`、`void addToQueue(Song)`。列表播放调用 playQueue；播放完成自动衔接；手动 next 在单曲循环时仍换歌；本地下载曲目会优先用本地音频。模式会保存。UI 新增上/下一首、模式切换和简洁队列，不添加未要求的复杂功能。
+* `core.repository.lyricsFor(Song)` 现在优先读随下载保存的 LRC，离线仍返回时间轴歌词。UI 保留现有解析与同步高亮/滚动，点击歌词定位，增加“一键复制完整歌词”（去掉LRC时间标签，整首文本）。不伪造逐字时间戳；可用平滑当前行高亮/动画实现随进度律动，尊重减少动画。
+* `DownloadTask` 新增 `lyricsPath:String?`、`lyricsError:String?`。开关 core.library.downloadLyrics 控制未来下载时保存LRC；下载歌词失败不导致音频失败。旧任务兼容。`Future<void> core.downloads.saveLyrics(String id)` 可补存已完成任务歌词；下载页可显示小图标并支持分享 `.lrc`（非必要入口可放更多菜单）。
+* 下载成功 SnackBar 显式停留 2-3 秒，即使有 action 和系统无障碍 accessibleNavigation 也必须定时消失；连续提示前清理旧提示。其它短成功提示也统一有限时长。
+* 界面：新增简洁推荐页、收藏歌曲入口；搜索空状态展示历史与清除/删除；移走搜索页大教程和说明，把所有帮助/关于/说明集中到设置里的折叠条目或点击后打开。账号登录/手工凭据、音质、下载管理、系统分享、GitHub入口、更新均保留。关于说明不能占首页或播放页大卡片。
+* 点击迷你播放栏的曲目打开完整播放页，参考 YouTube Music 的大专辑图、清晰歌名和控制布局；不照搬商标。不加社交、广告、视频、排行榜页面等未要求功能。保持原品牌顶栏，手机/平板/大字体/深浅模式适配。
+* Gemini 仅修改 app/lib/**、app/test/**、UI_INTEGRATION_NOTES.md，必要资源可改app/assets，不改core/Android/版本号/本契约。不打包、不上传GitHub。Codex并行业务实现，暂时缺API可按上述契约先编码，完成后再analyze/test。
+
+
 ## 1.2.0 检查更新（最新增量）
 
 Codex 实现 GitHub Releases 检查/下载/校验/安卓安装逻辑和原生通道；Gemini 仅实现设置页更新卡片及对接测试，保留用户刚修改的「随时听 Anytime Music」顶栏与 GitHub 主页按钮。不要改业务包、Android、版本号或其他页面。

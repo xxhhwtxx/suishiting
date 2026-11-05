@@ -5,18 +5,22 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../pages/account_settings_page.dart';
 import '../pages/downloads_page.dart';
+import '../pages/favorites_page.dart';
+import '../pages/recommendations_page.dart';
 import '../pages/search_page.dart';
+import '../utils/app_snackbar.dart';
 import '../widgets/player_bar.dart';
 
 /// 主界面导航骨架：支持手机竖屏底部导航栏与宽屏/横屏侧边导航栏，
-/// 并在底部常驻展示迷你播放控制条。
+/// 包含「推荐 / 搜索 / 收藏 / 下载 / 设置」五大模块并在底部常驻展示迷你播放控制条。
 class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
     required this.core,
     this.shareFile,
+    this.shareLyricsFile,
     this.openExternalUrl,
-    this.themeMode = ThemeMode.system,
+    this.themeMode = ThemeMode.light,
     this.onCycleThemeMode,
   });
 
@@ -24,6 +28,7 @@ class HomeShell extends StatefulWidget {
 
   final Music163Core core;
   final Future<void> Function(DownloadTask task)? shareFile;
+  final Future<void> Function(DownloadTask task)? shareLyricsFile;
   final Future<bool> Function(Uri url)? openExternalUrl;
   final ThemeMode themeMode;
   final VoidCallback? onCycleThemeMode;
@@ -33,7 +38,18 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> {
-  int _selectedIndex = 0;
+  static const int _tabRecommendations = 0;
+  static const int _tabSearch = 1;
+  static const int _tabDownloads = 3;
+  static const int _tabAccount = 4;
+
+  int _selectedIndex = _tabRecommendations;
+
+  @override
+  void dispose() {
+    AppSnackBar.cancel();
+    super.dispose();
+  }
 
   void _selectTab(int index) {
     if (_selectedIndex == index) return;
@@ -62,9 +78,7 @@ class _HomeShellState extends State<HomeShell> {
     if (!opened && context.mounted) {
       await Clipboard.setData(ClipboardData(text: uri.toString()));
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已复制 GitHub 链接：${uri.toString()}')),
-      );
+      AppSnackBar.show(context, message: '已复制 GitHub 链接：${uri.toString()}');
     }
   }
 
@@ -85,6 +99,7 @@ class _HomeShellState extends State<HomeShell> {
     return ListenableBuilder(
       listenable: Listenable.merge([
         widget.core,
+        widget.core.library,
         widget.core.downloads,
         widget.core.auth,
         widget.core.qqAuth,
@@ -94,23 +109,45 @@ class _HomeShellState extends State<HomeShell> {
             .where((t) => t.isActive)
             .length;
         final totalDownloads = widget.core.downloads.tasks.length;
+        final favoritesCount = widget.core.library.favorites.length;
         final isLoggedIn =
             widget.core.auth.isLoggedIn || widget.core.qqAuth.isLoggedIn;
         final colorScheme = Theme.of(context).colorScheme;
 
         final pages = <Widget>[
+          RecommendationsPageView(
+            core: widget.core,
+            isActive: _selectedIndex == _tabRecommendations,
+            onNavigateToDownloads: () => _selectTab(_tabDownloads),
+          ),
           SearchPageView(
             core: widget.core,
-            onNavigateToDownloads: () => _selectTab(1),
-            onNavigateToAccount: () => _selectTab(2),
+            onNavigateToDownloads: () => _selectTab(_tabDownloads),
+            onNavigateToAccount: () => _selectTab(_tabAccount),
+          ),
+          FavoritesPageView(
+            core: widget.core,
+            onNavigateToSearch: () => _selectTab(_tabSearch),
+            onNavigateToDownloads: () => _selectTab(_tabDownloads),
           ),
           DownloadsPageView(
             core: widget.core,
-            onNavigateToSearch: () => _selectTab(0),
+            onNavigateToSearch: () => _selectTab(_tabSearch),
             shareFile: widget.shareFile,
+            shareLyricsFile: widget.shareLyricsFile,
           ),
           AccountSettingsPageView(core: widget.core),
         ];
+
+        Widget buildFavoriteIcon({required bool selected}) {
+          final icon = Icon(
+            selected ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+          );
+          if (favoritesCount > 0) {
+            return Badge.count(count: favoritesCount, child: icon);
+          }
+          return icon;
+        }
 
         Widget buildDownloadIcon({required bool selected}) {
           final icon = Icon(
@@ -178,9 +215,25 @@ class _HomeShellState extends State<HomeShell> {
                             onDestinationSelected: _selectTab,
                             destinations: [
                               const NavigationRailDestination(
+                                icon: Icon(Icons.explore_outlined),
+                                selectedIcon: Icon(Icons.explore_rounded),
+                                label: Text(
+                                  '推荐',
+                                  key: Key('nav_tab_recommendations'),
+                                ),
+                              ),
+                              const NavigationRailDestination(
                                 icon: Icon(Icons.search_rounded),
                                 selectedIcon: Icon(Icons.manage_search_rounded),
                                 label: Text('搜索', key: Key('nav_tab_search')),
+                              ),
+                              NavigationRailDestination(
+                                icon: buildFavoriteIcon(selected: false),
+                                selectedIcon: buildFavoriteIcon(selected: true),
+                                label: const Text(
+                                  '收藏',
+                                  key: Key('nav_tab_favorites'),
+                                ),
                               ),
                               NavigationRailDestination(
                                 icon: buildDownloadIcon(selected: false),
@@ -218,7 +271,7 @@ class _HomeShellState extends State<HomeShell> {
                   children: [
                     MiniPlayerBar(
                       core: widget.core,
-                      onOpenQueueOrDownloads: () => _selectTab(1),
+                      onOpenQueueOrDownloads: () => _selectTab(_tabDownloads),
                     ),
                     if (!useRail)
                       NavigationBar(
@@ -227,10 +280,22 @@ class _HomeShellState extends State<HomeShell> {
                         onDestinationSelected: _selectTab,
                         destinations: [
                           const NavigationDestination(
+                            key: Key('nav_tab_recommendations'),
+                            icon: Icon(Icons.explore_outlined),
+                            selectedIcon: Icon(Icons.explore_rounded),
+                            label: '推荐',
+                          ),
+                          const NavigationDestination(
                             key: Key('nav_tab_search'),
                             icon: Icon(Icons.search_rounded),
                             selectedIcon: Icon(Icons.manage_search_rounded),
                             label: '搜索',
+                          ),
+                          NavigationDestination(
+                            key: Key('nav_tab_favorites'),
+                            icon: buildFavoriteIcon(selected: false),
+                            selectedIcon: buildFavoriteIcon(selected: true),
+                            label: '收藏',
                           ),
                           NavigationDestination(
                             key: Key('nav_tab_downloads'),
@@ -242,7 +307,7 @@ class _HomeShellState extends State<HomeShell> {
                             key: Key('nav_tab_account'),
                             icon: buildAccountIcon(selected: false),
                             selectedIcon: buildAccountIcon(selected: true),
-                            label: '账号与设置',
+                            label: '设置',
                           ),
                         ],
                       ),

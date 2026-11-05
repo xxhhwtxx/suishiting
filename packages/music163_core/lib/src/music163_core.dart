@@ -7,6 +7,8 @@ import 'controllers/auth_controller.dart';
 import 'controllers/qq_auth_controller.dart';
 import 'controllers/update_controller.dart';
 import 'controllers/base_controller.dart';
+import 'controllers/library_controller.dart';
+import 'controllers/recommendation_controller.dart';
 import 'controllers/download_controller.dart';
 import 'controllers/player_controller.dart';
 import 'controllers/search_controller.dart';
@@ -26,6 +28,8 @@ class Music163Core extends SafeNotifier {
     required this.updates,
     required this.player,
     required this.downloads,
+    required this.library,
+    required this.recommendations,
     required this._store,
   });
   final MusicRepository repository;
@@ -35,6 +39,8 @@ class Music163Core extends SafeNotifier {
   final UpdateController updates;
   final PlayerController player;
   final DownloadController downloads;
+  final LibraryController library;
+  final RecommendationController recommendations;
   final CredentialStore _store;
   AudioQuality get quality => repository.quality;
 
@@ -77,17 +83,39 @@ class Music163Core extends SafeNotifier {
               'music163_downloads',
             ),
           );
+      repository.lyricDirectory = Directory(p.join(directory.path, 'lyrics'));
+      final library = LibraryController(store);
+      await library.restore();
+      final downloads = DownloadController(
+        repository,
+        directory,
+        downloadLyrics: () => library.downloadLyrics,
+      );
+      await downloads.restore();
       core = Music163Core._(
         repository: repository,
-        search: SearchController(repository),
+        search: SearchController(repository, library: library),
         auth: AuthController(api, store),
         qqAuth: QqAuthController(qqApi, store),
         updates: updater ?? UpdateController(),
-        player: PlayerController(repository, backend),
-        downloads: DownloadController(repository, directory),
+        player: PlayerController(
+          repository,
+          backend,
+          library: library,
+          localPathFor: (song) => downloads.tasks
+              .where(
+                (t) =>
+                    t.song.key == song.key &&
+                    t.state == DownloadState.completed,
+              )
+              .firstOrNull
+              ?.path,
+        ),
+        downloads: downloads,
+        library: library,
+        recommendations: RecommendationController(repository),
         store: store,
       );
-      await core.downloads.restore();
       await core.auth.restore();
       await core.qqAuth.restore();
       return core;
@@ -130,8 +158,10 @@ class Music163Core extends SafeNotifier {
     qqAuth.dispose();
     await updates.close();
     search.dispose();
+    recommendations.dispose();
     await player.close();
     await downloads.close();
+    await library.close();
     repository.api.close();
     repository.qqApi?.close();
     dispose();

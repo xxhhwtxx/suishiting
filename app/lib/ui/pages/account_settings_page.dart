@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide SearchController;
 import 'package:flutter/services.dart';
 import 'package:music163_core/music163_core.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../utils/app_snackbar.dart';
 import '../utils/formatters.dart';
 import '../widgets/song_cover.dart';
 import '../widgets/update_card.dart';
@@ -71,12 +74,10 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
     if (!mounted) return;
     if (widget.core.auth.isLoggedIn && widget.core.auth.error == null) {
       _musicUController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
+      AppSnackBar.show(
+        context,
+        message:
             '网易云音乐登录成功，欢迎 ${widget.core.auth.profile?.nickname ?? '网易云用户'}',
-          ),
-        ),
       );
     }
   }
@@ -88,12 +89,10 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
     if (!mounted) return;
     if (widget.core.qqAuth.isLoggedIn) {
       _qqCredentialController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
+      AppSnackBar.show(
+        context,
+        message:
             'QQ 音乐登录成功，欢迎 ${widget.core.qqAuth.profile?.nickname ?? 'QQ 音乐用户'}',
-          ),
-        ),
       );
     }
   }
@@ -110,6 +109,7 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
     return ListenableBuilder(
       listenable: Listenable.merge([
         widget.core,
+        widget.core.library,
         widget.core.auth,
         widget.core.qqAuth,
       ]),
@@ -142,7 +142,11 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
               ],
               _buildQualityCard(context, colorScheme),
               const SizedBox(height: 16),
+              _buildPreferencesCard(context, colorScheme),
+              const SizedBox(height: 16),
               UpdateCard(core: widget.core),
+              const SizedBox(height: 16),
+              _buildHelpAndGuideCard(context, colorScheme),
             ],
           ),
         );
@@ -302,31 +306,18 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
               ),
             ] else ...[
               Container(
-                padding: const EdgeInsets.all(14),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '当前处于匿名访问模式',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '匿名模式支持搜索网易云曲目及播放公开权限音源。需要使用更高音质或下载完整歌曲时，请通过下方「扫码登录」或「导入 MUSIC_U」登录您自己的网易云账号。',
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.42,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                child: const Text(
+                  '当前处于匿名访问模式',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -369,22 +360,13 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    '网易云音乐 · 扫码登录（本地生成二维码）',
+                    '网易云音乐 · 扫码登录',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '请用另一台设备上的网易云音乐 App 扫描二维码，并在该设备上确认登录。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -506,16 +488,7 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '可粘贴自己的 MUSIC_U 值或包含该值的 Cookie。验证成功后会加密保存在本机。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             TextField(
               key: const Key('music_u_input_field'),
               controller: _musicUController,
@@ -569,14 +542,6 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 onPressed: auth.isBusy ? null : _submitMusicU,
                 icon: const Icon(Icons.verified_user_outlined),
                 label: const Text('验证并导入 MUSIC_U'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              '隐私承诺：绝不打印 Cookie 日志，凭据仅随加密请求发往 music.163.com，不转发至媒体 CDN 或任何第三方。',
-              style: TextStyle(
-                fontSize: 12,
-                color: colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -740,31 +705,18 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
               ),
             ] else ...[
               Container(
-                padding: const EdgeInsets.all(14),
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
                 decoration: BoxDecoration(
                   color: colorScheme.surfaceContainer,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'QQ 音乐当前未登录',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '未登录时仍可检索 QQ 音乐曲目与歌词，但多数音源解析需要登录态。请使用下方「手机 QQ 扫码登录」或「导入 QQ 音乐凭据」登录（与网易云音乐账号相互独立）。',
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.42,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
+                child: const Text(
+                  'QQ 音乐当前未登录',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -820,16 +772,7 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '请使用手机 QQ 扫描下方二维码并在手机端确认授权（可使用另一台设备扫码）。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -1003,16 +946,7 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              '支持粘贴完整 QQ 音乐 Cookie（包含 qqmusic_uin / uin 与 qqmusic_key / qm_keyst）或凭据 JSON（包含 musicid、musickey）。验证通过后将加密保存在本机。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             TextField(
               key: const Key('qq_credential_input_field'),
               controller: _qqCredentialController,
@@ -1068,14 +1002,6 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 label: const Text('验证并导入 QQ 音乐凭据'),
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              '隐私承诺：绝不打印 Cookie 日志，凭据仅发往 QQ 音乐官方鉴权接口，不转发至第三方。',
-              style: TextStyle(
-                fontSize: 12,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
           ],
         ),
       ),
@@ -1111,15 +1037,6 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '音质设置仅代表向当前平台接口发起的优先请求档位，不等同于破解或解锁会员权限；最终实际音质以源文件与当前登录账号权限为准。',
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: colorScheme.onSurfaceVariant,
-              ),
             ),
             const SizedBox(height: 12),
             for (final quality in AudioQuality.values) ...[
@@ -1194,6 +1111,167 @@ class _AccountSettingsPageViewState extends State<AccountSettingsPageView> {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPreferencesCard(BuildContext context, ColorScheme colorScheme) {
+    final library = widget.core.library;
+    final currentTheme = library.themePreference;
+
+    return Card(
+      key: const Key('app_preferences_card'),
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.palette_outlined,
+                  size: 20,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    '外观与歌词下载设置',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            if (library.error != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                key: const Key('library_error_banner'),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  library.error!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onErrorContainer,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            Text(
+              '外观主题',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final pref in AppThemePreference.values)
+                  ChoiceChip(
+                    key: Key('theme_option_${pref.name}'),
+                    label: Text(UiFormatters.themePreferenceLabel(pref)),
+                    selected: currentTheme == pref,
+                    onSelected: (_) {
+                      unawaited(library.setTheme(pref));
+                    },
+                  ),
+              ],
+            ),
+            const Divider(height: 24),
+            SwitchListTile(
+              key: const Key('download_lyrics_switch'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                '下载歌曲时同步保存 LRC 歌词',
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700),
+              ),
+              subtitle: Text(
+                '开启后下载音频会同时保存 .lrc 歌词文件，离线播放也能同步展示歌词',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              value: library.downloadLyrics,
+              onChanged: (value) {
+                unawaited(library.setDownloadLyrics(value));
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHelpAndGuideCard(BuildContext context, ColorScheme colorScheme) {
+    return Card(
+      key: const Key('settings_help_card'),
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          key: const Key('settings_help_and_guide_tile'),
+          leading: Icon(Icons.help_outline_rounded, color: colorScheme.primary),
+          title: const Text(
+            '搜索教程与使用说明',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+          ),
+          subtitle: Text(
+            '点击展开搜索语法、音源权限、离线歌词与客户端说明',
+            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Divider(height: 16),
+            Text(
+              '1. 搜索与链接解析语法\n'
+              '• 关键词：直接输入歌名、歌手或专辑名称搜索网易云音乐或 QQ 音乐。\n'
+              '• 网易云直达：支持纯数字歌曲 ID（如 186016）及 music.163.com / 163cn.tv 单曲分享链接。\n'
+              '• QQ 音乐直达：支持数字 songid、14 位字母数字 songmid（如 0039MnYb0qxYhV）及 y.qq.com 单曲链接。\n\n'
+              '2. 账号登录与凭据格式\n'
+              '• 匿名模式可检索曲目与歌词；完整音源及更高音质可扫码或导入凭据登录（双平台账号相互独立）。\n'
+              '• 扫码登录：使用网易云音乐 App 或手机 QQ 扫描对应二维码并在手机端确认授权。\n'
+              '• 凭据导入：网易云支持粘贴 MUSIC_U 值或含该值的 Cookie；QQ 音乐支持包含 uin / qqmusic_key 的 Cookie 或包含 musicid / musickey 的 JSON。\n\n'
+              '3. 音源权限、本地下载与离线歌词\n'
+              '• 优先音质设置仅代表向平台接口发起的请求档位，实际返回音质与试听片段受平台接口及当前登录账号权限决定。\n'
+              '• 下载的音频与 .lrc 歌词保存在应用私有目录，支持系统分享导出；已完成任务即使离线也能通过本地文件播放并同步滚动 LRC 歌词。\n\n'
+              '4. 账号与隐私安全\n'
+              '• 随时听直接连接音乐平台官方接口，不经过任何第三方中转服务器，不打印 Cookie 日志，登录凭据仅加密保存在本机安全存储中。',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.5,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
           ],
         ),
       ),

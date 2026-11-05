@@ -1,10 +1,12 @@
 import '../data/music_repository.dart';
 import '../domain/models.dart';
 import 'base_controller.dart';
+import 'library_controller.dart';
 
 class SearchController extends SafeNotifier {
-  SearchController(this._repository);
+  SearchController(this._repository, {this.library});
   final MusicRepository _repository;
+  final LibraryController? library;
   String query = '';
   List<Song> get songs => List.unmodifiable(_songs);
   List<Song> _songs = [];
@@ -40,6 +42,8 @@ class SearchController extends SafeNotifier {
     isLoading = true;
     changed();
     try {
+      await library?.addSearch(query);
+      if (request != _generation || closed) return;
       final resolved = await _repository.resolveSong(selectedPlatform, query);
       final page = resolved != null
           ? SearchPage(songs: [resolved], hasMore: false, total: 1)

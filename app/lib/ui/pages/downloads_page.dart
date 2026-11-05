@@ -1,32 +1,34 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart' hide SearchController;
 import 'package:music163_core/music163_core.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../utils/app_snackbar.dart';
 import '../utils/formatters.dart';
 import '../widgets/song_cover.dart';
 
-/// 下载任务页：展示应用私有目录中的下载队列、进度、错误原因，
-/// 支持取消、重试、系统分享导出及带二次确认的删除。
+/// 下载任务页：展示应用私有目录中的下载队列、进度、LRC 歌词保存状态与错误原因，
+/// 支持取消、重试、补存或分享 `.lrc` 歌词、系统分享导出音频及带二次确认的删除。
 class DownloadsPageView extends StatelessWidget {
   const DownloadsPageView({
     super.key,
     required this.core,
     required this.onNavigateToSearch,
     this.shareFile,
+    this.shareLyricsFile,
   });
 
   final Music163Core core;
   final VoidCallback onNavigateToSearch;
   final Future<void> Function(DownloadTask task)? shareFile;
+  final Future<void> Function(DownloadTask task)? shareLyricsFile;
 
   Future<void> _handleShare(BuildContext context, DownloadTask task) async {
     final path = task.path;
     if (path == null || path.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未找到本地音频文件路径，请重新下载。')),
-      );
+      AppSnackBar.show(context, message: '未找到本地音频文件路径，请重新下载。');
       return;
     }
 
@@ -38,9 +40,7 @@ class DownloadsPageView extends StatelessWidget {
       final file = File(path);
       if (!await file.exists()) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('本地音频文件不存在，可能已被清理，请重试下载。')),
-        );
+        AppSnackBar.show(context, message: '本地音频文件不存在，可能已被清理，请重试下载。');
         return;
       }
       await SharePlus.instance.share(
@@ -51,9 +51,56 @@ class DownloadsPageView extends StatelessWidget {
       );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('调用系统分享失败：$e')),
+      AppSnackBar.show(context, message: '调用系统分享失败：$e');
+    }
+  }
+
+  Future<void> _handleShareLyrics(
+    BuildContext context,
+    DownloadTask task,
+  ) async {
+    final lrcPath = task.lyricsPath;
+    if (lrcPath == null || lrcPath.trim().isEmpty) {
+      AppSnackBar.show(context, message: '尚未保存本地 LRC 歌词文件。');
+      return;
+    }
+
+    try {
+      if (shareLyricsFile != null) {
+        await shareLyricsFile!(task);
+        return;
+      }
+      final file = File(lrcPath);
+      if (!await file.exists()) {
+        if (!context.mounted) return;
+        AppSnackBar.show(context, message: '本地 LRC 歌词文件不存在，可点击补存歌词。');
+        return;
+      }
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(lrcPath)],
+          subject: '${task.song.name} - 歌词.lrc',
+        ),
       );
+    } catch (e) {
+      if (!context.mounted) return;
+      AppSnackBar.show(context, message: '分享歌词失败：$e');
+    }
+  }
+
+  Future<void> _handleSaveLyrics(
+    BuildContext context,
+    DownloadTask task,
+  ) async {
+    await core.downloads.saveLyrics(task.id);
+    if (!context.mounted) return;
+    final updated = core.downloads.tasks
+        .where((t) => t.id == task.id)
+        .firstOrNull;
+    if (updated?.lyricsPath != null) {
+      AppSnackBar.show(context, message: '已保存「${task.song.name}」的 LRC 歌词');
+    } else if (updated?.lyricsError != null) {
+      AppSnackBar.show(context, message: updated!.lyricsError!);
     }
   }
 
@@ -69,7 +116,7 @@ class DownloadsPageView extends StatelessWidget {
           title: const Text('确认删除下载记录？'),
           content: Text(
             hasFile
-                ? '将同时移除「${task.song.name}」的下载记录并删除本机私有目录中的音频文件（${UiFormatters.fileNameFromPath(task.path)}）。此操作不可恢复。'
+                ? '将同时移除「${task.song.name}」的下载记录并删除本机私有目录中的音频与歌词文件（${UiFormatters.fileNameFromPath(task.path)}）。此操作不可恢复。'
                 : '将从下载列表中移除「${task.song.name}」的任务记录。',
           ),
           actions: [
@@ -107,9 +154,10 @@ class DownloadsPageView extends StatelessWidget {
         final colorScheme = Theme.of(context).colorScheme;
 
         final activeCount = tasks.where((t) => t.isActive).length;
-        final completedCount = tasks
+        final completedTasks = tasks
             .where((t) => t.state == DownloadState.completed)
-            .length;
+            .toList();
+        final completedCount = completedTasks.length;
         final failedOrCancelledCount = tasks
             .where(
               (t) =>
@@ -134,39 +182,50 @@ class DownloadsPageView extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  Row(
                     children: [
-                      _SummaryPill(
-                        icon: Icons.downloading_rounded,
-                        label: '进行中 $activeCount',
-                        color: colorScheme.primaryContainer,
-                        onColor: colorScheme.onPrimaryContainer,
+                      Expanded(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            _SummaryPill(
+                              icon: Icons.downloading_rounded,
+                              label: '进行中 $activeCount',
+                              color: colorScheme.primaryContainer,
+                              onColor: colorScheme.onPrimaryContainer,
+                            ),
+                            _SummaryPill(
+                              icon: Icons.check_circle_outline_rounded,
+                              label: '已完成 $completedCount',
+                              color: colorScheme.secondaryContainer,
+                              onColor: colorScheme.onSecondaryContainer,
+                            ),
+                            if (failedOrCancelledCount > 0)
+                              _SummaryPill(
+                                icon: Icons.error_outline_rounded,
+                                label: '异常/已取消 $failedOrCancelledCount',
+                                color: colorScheme.errorContainer,
+                                onColor: colorScheme.onErrorContainer,
+                              ),
+                          ],
+                        ),
                       ),
-                      _SummaryPill(
-                        icon: Icons.check_circle_outline_rounded,
-                        label: '已完成 $completedCount',
-                        color: colorScheme.secondaryContainer,
-                        onColor: colorScheme.onSecondaryContainer,
-                      ),
-                      if (failedOrCancelledCount > 0)
-                        _SummaryPill(
-                          icon: Icons.error_outline_rounded,
-                          label: '异常/已取消 $failedOrCancelledCount',
-                          color: colorScheme.errorContainer,
-                          onColor: colorScheme.onErrorContainer,
+                      if (completedTasks.isNotEmpty)
+                        FilledButton.tonalIcon(
+                          key: const Key('downloads_play_all_button'),
+                          onPressed: () {
+                            unawaited(
+                              core.player.playQueue(
+                                completedTasks.map((t) => t.song).toList(),
+                                startIndex: 0,
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                          label: const Text('播放全部'),
                         ),
                     ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '存储说明：文件保存在应用私有目录，完成后可点击「分享导出」发送到外部应用；卸载应用将清理私有目录。试听音源不会保存为完整歌曲。',
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.38,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
                   ),
                   if (downloads.error != null) ...[
                     const SizedBox(height: 10),
@@ -218,6 +277,9 @@ class DownloadsPageView extends StatelessWidget {
                           onCancel: () => downloads.cancel(task.id),
                           onRetry: () => downloads.retry(task.id),
                           onShare: () => _handleShare(context, task),
+                          onSaveLyrics: () => _handleSaveLyrics(context, task),
+                          onShareLyrics: () =>
+                              _handleShareLyrics(context, task),
                           onPlay: () {
                             final path = task.path;
                             if (path != null && path.trim().isNotEmpty) {
@@ -263,14 +325,11 @@ class DownloadsPageView extends StatelessWidget {
               const SizedBox(height: 16),
               const Text(
                 '暂无下载任务',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               Text(
-                '在搜索页检索歌曲后点击下载图标，即可将完整音源保存到本机私有目录并随时分享导出。',
+                '在推荐或搜索页点击下载图标，即可保存歌曲与 LRC 歌词。',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -300,6 +359,8 @@ class _DownloadTaskCard extends StatelessWidget {
     required this.onCancel,
     required this.onRetry,
     required this.onShare,
+    required this.onSaveLyrics,
+    required this.onShareLyrics,
     required this.onPlay,
     required this.onRemove,
   });
@@ -309,6 +370,8 @@ class _DownloadTaskCard extends StatelessWidget {
   final VoidCallback onCancel;
   final VoidCallback onRetry;
   final VoidCallback onShare;
+  final VoidCallback onSaveLyrics;
+  final VoidCallback onShareLyrics;
   final VoidCallback onPlay;
   final VoidCallback onRemove;
 
@@ -317,6 +380,8 @@ class _DownloadTaskCard extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final song = task.song;
     final fileName = UiFormatters.fileNameFromPath(task.path);
+    final hasLyrics =
+        task.lyricsPath != null && task.lyricsPath!.trim().isNotEmpty;
 
     final (badgeBg, badgeFg) = switch (task.state) {
       DownloadState.completed => (
@@ -331,10 +396,7 @@ class _DownloadTaskCard extends StatelessWidget {
         colorScheme.surfaceContainerHighest,
         colorScheme.onSurfaceVariant,
       ),
-      _ => (
-        colorScheme.primaryContainer,
-        colorScheme.onPrimaryContainer,
-      ),
+      _ => (colorScheme.primaryContainer, colorScheme.onPrimaryContainer),
     };
 
     return Card(
@@ -451,6 +513,37 @@ class _DownloadTaskCard extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (hasLyrics)
+                            Container(
+                              key: Key('download_lrc_badge_${task.id}'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.lyrics_rounded,
+                                    size: 12,
+                                    color: colorScheme.onPrimaryContainer,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    'LRC',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: colorScheme.onPrimaryContainer,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           Text(
                             UiFormatters.formatByteProgress(
                               task.downloadedBytes,
@@ -504,6 +597,18 @@ class _DownloadTaskCard extends StatelessWidget {
                 ],
               ),
             ],
+            if (task.lyricsError != null &&
+                task.lyricsError!.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                task.lyricsError!,
+                key: Key('download_lrc_error_${task.id}'),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             if (task.error != null) ...[
               const SizedBox(height: 10),
               Container(
@@ -540,6 +645,7 @@ class _DownloadTaskCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 8,
               alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (task.isActive)
                   OutlinedButton.icon(
@@ -569,6 +675,20 @@ class _DownloadTaskCard extends StatelessWidget {
                     icon: const Icon(Icons.share_rounded, size: 18),
                     label: const Text('分享导出'),
                   ),
+                  if (hasLyrics)
+                    TextButton.icon(
+                      key: Key('download_share_lrc_btn_${task.id}'),
+                      onPressed: onShareLyrics,
+                      icon: const Icon(Icons.lyrics_outlined, size: 18),
+                      label: const Text('分享歌词'),
+                    )
+                  else
+                    TextButton.icon(
+                      key: Key('download_save_lrc_btn_${task.id}'),
+                      onPressed: onSaveLyrics,
+                      icon: const Icon(Icons.lyrics_outlined, size: 18),
+                      label: const Text('补存歌词'),
+                    ),
                 ],
                 TextButton.icon(
                   key: Key('download_remove_btn_${task.id}'),

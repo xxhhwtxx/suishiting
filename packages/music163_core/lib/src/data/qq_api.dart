@@ -247,6 +247,20 @@ class QqApi {
     );
   }
 
+  Future<List<Song>> recommendations() async {
+    final data = await call('newsong.NewSongServer', 'get_new_song_info', {
+      'type': 5,
+    });
+    return (data['songlist'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(
+          (entry) =>
+              parseSong((entry['songInfo'] as Map<String, dynamic>?) ?? entry),
+        )
+        .take(40)
+        .toList();
+  }
+
   static Song parseSong(Map<String, dynamic> data) {
     final album = data['album'] as Map<String, dynamic>? ?? {};
     final mid = (data['mid'] ?? data['songmid']) as String?;
